@@ -38,7 +38,7 @@ int main(int argc, char* argv[])
 		printf("\tSwitches on all the relays except for three, determined by their path, internal number and unique ID respectively.\n");
 		return 0;
 	}
-	unsigned char buf[65];
+	unsigned char buf[8];
 	unsigned long device_id;
 
 	struct hid_device_info *devs, *cur_dev;
@@ -60,16 +60,19 @@ int main(int argc, char* argv[])
 		handle = hid_open_path(cur_dev->path);
 		if (handle) {
 		
-			memset(buf, sizeof(buf), 0);
 			device_id = 0;
-			buf[0] = 0x1d;
-			if (hid_send_feature_report(handle, buf, 8) > -1){
-				if (hid_get_feature_report(handle, buf, 8) > -1){
-					if (buf[0]==0x1d) {
-						device_id = (buf[4] << 24) + (buf[5] << 16) + (buf[6] << 8) + buf[7];
-						//printf("0x%lx\n", device_id);
-					}
-				}
+
+			memset(buf, 0, sizeof(buf));
+			buf[0] = 0x1d; 
+			if (hid_send_feature_report(handle, buf, 8) == -1) {
+				fprintf(stderr, "Error sending request to the device number %d path: %s\n", i, cur_dev->path);
+			}
+			if (hid_get_feature_report(handle, buf, 8) == -1) {
+				fprintf(stderr, "Error getting response from the device number %d path: %s\n", i, cur_dev->path);
+			}
+
+			if (buf[0]==0x1d) {
+				device_id = (buf[4] << 24) + (buf[5] << 16) + (buf[6] << 8) + buf[7];
 			}
 			
 			if (device_id == 0) {
@@ -105,7 +108,7 @@ int main(int argc, char* argv[])
 				} else {
 					if (argv[arg][0] == '0' && argv[arg][1] == 'x') {
 						//hex int, it's a unique id
-						if (device_id == device)
+						if (device_id != 0 && device_id == device)
 							on_off = arg_on_off;
 					} else {
 						//decimal int, match by number
@@ -117,36 +120,38 @@ int main(int argc, char* argv[])
 	
 			//by this point we have on_off set to 0,-1 or 1
 			char state[20] = "unknown";
-			//some magic
-			buf[0] = 0x00;
-			buf[1] = 0x1d;
-			buf[2] = 0x00;
-			hid_send_feature_report(handle, buf, 8);
-			hid_get_feature_report(handle, buf, sizeof(buf));
 
 			//issue the command if needed
 			if (on_off != 0) {
 				memset(buf, sizeof(buf), 0);
-				buf[1] = 0xe7;
+				buf[0] = 0xe7;
 
 				if(on_off == 1) //on
-					buf[2] = 0x0;
+					buf[1] = 0x0;
 				if(on_off == -1) //off
-					buf[2] = 0x19;
+					buf[1] = 0x19;
 
-				hid_send_feature_report(handle, buf, 8);
+				if (hid_send_feature_report(handle, buf, 8) == -1) {
+					fprintf(stderr, "Error issuing the command to the device number %d path: %s\n", i, cur_dev->path);
+				}
 			}
 
 			//check the result
-			memset(buf, sizeof(buf), 0);
-			buf[1] = 0x7e;
-			hid_send_feature_report(handle, buf, 8);
-			hid_get_feature_report(handle, buf, sizeof(buf));
-			if (buf[2] == 0x19)
-				sprintf(state, "off");
-			else if (buf[2] == 0)
-				sprintf(state, "on");
-				
+			memset(buf, 0x7e, sizeof(buf));
+			if (hid_send_feature_report(handle, buf, 8) == -1) {
+				fprintf(stderr, "Error checking state of the device number %d path: %s\n", i, cur_dev->path);
+			}
+			if (hid_get_feature_report(handle, buf, 8) == -1) {
+				fprintf(stderr, "Error reading state of the device number %d path: %s\n", i, cur_dev->path);
+			}
+
+			if (buf[0] == 0x7e) {
+				if (buf[1] == 0x19)
+					sprintf(state, "off");
+				else if (buf[1] == 0)
+					sprintf(state, "on");
+			}
+			
 			hid_close(handle);
 			if (device_id) {
 				printf("Device number %d path: %s unique ID: 0x%lx state: %s\n", i, cur_dev->path, device_id, state);
